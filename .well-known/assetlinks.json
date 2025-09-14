@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.okauto.app",
+      "sha256_cert_fingerprints": [
+        "74:7E:68:F5:63:07:2A:0E:90:3A:DA:E6:F0:AB:9F:09:DC:73:DE:5C:DE:11:B3:A7:71:24:EF:B0:45:23:2E:F3"
+      ]
+    }
+  }
+]

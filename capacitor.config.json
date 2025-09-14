@@ -1,0 +1,9 @@
+{
+  "appId": "app.okauto.twa",
+  "appName": "OkAuto",
+  "webDir": "/var/www/html/okauto.app/core/public",
+  "server": {
+    "url": "https://okauto.app",
+    "cleartext": true
+  }
+}

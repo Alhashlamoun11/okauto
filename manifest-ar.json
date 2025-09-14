@@ -1,0 +1,24 @@
+{
+    "name": "أوك أوتو | OK AUTO",
+    "short_name": "أوك أوتو",
+  "start_url": "https://okauto.app",
+  "scope": "https://okauto.app/",
+"display": "fullscreen",
+    "background_color": "#ffffff",
+    "theme_color": "#489efd",
+    "orientation": "portrait",
+    "lang": "ar",
+    "icons": [
+      {
+        "src": "https://okauto.app/assets/images/logo_icon/Screenshot_2025-04-06_152847-removebg-preview (1).png",
+        "sizes": "192x192",
+        "type": "image/png"
+      },
+      {
+        "src": "https://okauto.app/assets/images/logo_icon/Screenshot_2025-04-06_152847-removebg-preview (2).png",
+        "sizes": "512x512",
+        "type": "image/png"
+      }
+    ]
+  }
+  

@@ -1,0 +1,61 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+
+
+use Mpdf\Mpdf;
+
+Route::get('user/reservations/{id}/invoice', 'User\UserController@viewInvoice')->name('user.reservation.invoice');
+Route::get('user/reservations/{id}/invoice/download', 'User\UserController@downloadInvoice')->name('user.reservation.invoice.download');
+
+Route::get('/clear', function(){
+    \Illuminate\Support\Facades\Artisan::call('optimize:clear');
+});
+// Route::get('/login', function(){
+//     return ('');
+// });
+
+    Route::get('/.well-known/assetlinks.json', function () {
+        return response()->file(public_path('.well-known/assetlinks.json'), ['Content-Type' => 'application/json']);
+    });
+    
+// User Support Ticket
+Route::controller('TicketController')->prefix('ticket')->name('ticket.')->group(function () {
+    Route::get('/', 'supportTicket')->name('index');
+    Route::get('new', 'openSupportTicket')->name('open');
+    Route::post('create', 'storeSupportTicket')->name('store');
+    Route::get('view/{ticket}', 'viewTicket')->name('view');
+    Route::post('reply/{id}', 'replyTicket')->name('reply');
+    Route::post('close/{id}', 'closeTicket')->name('close');
+    Route::get('download/{attachment_id}', 'ticketDownload')->name('download');
+});
+
+
+Route::controller('SiteController')->group(function () {
+    Route::get('/contact', 'contact')->name('contact');
+
+    Route::post('/contact', 'contactSubmit');
+
+    Route::post('/subscribe', 'subscribe')->name('subscribe');
+
+    Route::get('/change/{lang?}', 'changeLanguage')->name('lang');
+
+    Route::get('cookie-policy', 'cookiePolicy')->name('cookie.policy');
+
+    Route::get('/cookie/accept', 'cookieAccept')->name('cookie.accept');
+
+    Route::get('blog', 'blog')->name('blog');
+    Route::get('blog/{slug}', 'blogDetails')->name('blog.details');
+
+    Route::get('policy/{slug}', 'policyPages')->name('policy.pages');
+
+    Route::get('placeholder-image/{size}', 'placeholderImage')->withoutMiddleware('maintenance')->name('placeholder.image');
+    Route::get('maintenance-mode','maintenance')->withoutMiddleware('maintenance')->name('maintenance');
+
+    Route::get('vehicles/{slug?}', 'vehicles')->name('vehicles');
+    Route::get('vehicle/{slug}', 'vehicleDetail')->name('vehicle.detail');
+    Route::get('zone/location/{id?}', 'zoneLocation')->name('zone.location');
+
+    Route::get('/{slug}', 'pages')->name('pages');
+    Route::get('/', 'index')->name('home');
+});

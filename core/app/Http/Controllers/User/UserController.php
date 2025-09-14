@@ -1,0 +1,383 @@
+<?php
+
+namespace App\Http\Controllers\User;
+
+use App\Constants\Status;
+use App\Http\Controllers\Controller;
+use App\Lib\FormProcessor;
+use App\Lib\GoogleAuthenticator;
+use App\Models\DeviceToken;
+use App\Models\Form;
+use App\Models\Rental;
+use App\Models\Transaction;
+use App\Models\Vehicle;
+use App\Models\Withdrawal;
+use App\Models\Zone;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Auth;
+use App\Models\Deposit;
+use Mpdf\Mpdf;
+use Illuminate\Support\Facades\View;
+use Illuminate\Support\Facades\Storage;
+
+class UserController extends Controller
+{
+
+    public function home()
+    {
+        $pageTitle = 'Dashboard';
+        $user      = auth()->user();
+
+        $zones = Zone::where('id', '!=', $user->zone_id)->active()->get();
+
+        $rentals                    = Rental::where('vehicle_user_id', auth()->id())->with(['user:id,username', 'vehicle.brand'])->limit(5)->get();
+        $widget['total_vehicle']    = Vehicle::where('user_id', $user->id)->count();
+//         $widget['total_income']     = Rental::where('vehicle_user_id', $user->id)->completed()->sum('price');
+        $widget['total_income'] = Rental::with('deposit')
+        ->where('vehicle_user_id', $user->id)
+        ->completed()
+        ->get()
+        ->sum(function($r) {
+            $final_income=($r->deposit->amount ?? 0)
+            + ($r->extra_services_amount ?? 0)
+            + ($r->deposit->tax ?? 0);
+            return $final_income - ($final_income*(gs('rental_charge')/100));
+        });
+
+            $widget['total_withdrawan'] = Withdrawal::approved()
+            ->where('user_id', $user->id)
+            ->sum('amount');
+
+//             $widget['total_balance'] = $widget['total_income'] - $widget['total_withdrawan'];
+            $widget['total_balance'] = $user->balance;
+            
+//             dd(Rental::with('deposit')
+//                 ->where('vehicle_user_id', $user->id)
+//                 ->completed()
+//                 ->get());
+//             dd(
+//                 Rental::with('deposit')
+//                 ->where('vehicle_user_id', $user->id)
+//                 ->completed()
+//                 ->get()
+//                 ->map(function ($r) {
+//                     return [
+//                         'rent_id'      => $r->id,
+//                         'price'        => $r->price,
+//                         'extra'        => $r->deposit->extra_services_amount ?? 0,
+//                         'tax'          => $r->deposit->tax ?? 0,
+//                         'discount'     => $r->deposit->coupon_discount ?? 0,
+//                         'user_paid'    => ($r->price ?? 0) + ($r->deposit->extra_services_amount ?? 0) + ($r->deposit->tax ?? 0) - ($r->deposit->coupon_discount ?? 0),
+//                         'vendor_income'=> ($r->price ?? 0) + ($r->deposit->extra_services_amount ?? 0) + ($r->deposit->tax ?? 0)
+//                     ];
+//                 })
+//                 );
+
+
+
+        return view('Template::user.dashboard', compact('pageTitle', 'user', 'zones', 'rentals', 'widget'));
+    }
+
+    public function depositHistory(Request $request)
+    {
+        $pageTitle = 'Payment History';
+        $deposits = auth()->user()->deposits()->searchable(['trx'])->with(['gateway'])->orderBy('id','desc')->paginate(getPaginate());
+        return view('Template::user.deposit_history', compact('pageTitle', 'deposits'));
+    }
+
+    public function show2faForm()
+    {
+        $ga = new GoogleAuthenticator();
+        $user = auth()->user();
+        $secret = $ga->createSecret();
+        $qrCodeUrl = $ga->getQRCodeGoogleUrl($user->username . '@' . gs('site_name'), $secret);
+        $pageTitle = '2FA Security';
+        return view('Template::user.twofactor', compact('pageTitle', 'secret', 'qrCodeUrl'));
+    }
+
+    public function create2fa(Request $request)
+    {
+        $user = auth()->user();
+        $request->validate([
+            'key' => 'required',
+            'code' => 'required',
+        ]);
+        $response = verifyG2fa($user,$request->code,$request->key);
+        if ($response) {
+            $user->tsc = $request->key;
+            $user->ts = Status::ENABLE;
+            $user->save();
+            $notify[] = ['success', 'Two factor authenticator activated successfully'];
+            return back()->withNotify($notify);
+        } else {
+            $notify[] = ['error', 'Wrong verification code'];
+            return back()->withNotify($notify);
+        }
+    }
+
+    public function disable2fa(Request $request)
+    {
+        $request->validate([
+            'code' => 'required',
+        ]);
+
+        $user = auth()->user();
+        $response = verifyG2fa($user,$request->code);
+        if ($response) {
+            $user->tsc = null;
+            $user->ts = Status::DISABLE;
+            $user->save();
+            $notify[] = ['success', 'Two factor authenticator deactivated successfully'];
+        } else {
+            $notify[] = ['error', 'Wrong verification code'];
+        }
+        return back()->withNotify($notify);
+    }
+
+    public function transactions()
+    {
+        $pageTitle = 'Transactions';
+        $remarks = Transaction::distinct('remark')->orderBy('remark')->get('remark');
+
+        $transactions = Transaction::where('user_id',auth()->id())->searchable(['trx'])->filter(['trx_type','remark'])->orderBy('id','desc')->paginate(getPaginate());
+
+        return view('Template::user.transactions', compact('pageTitle','transactions','remarks'));
+    }
+
+    public function kycForm()
+    {
+        if (auth()->user()->kv == Status::KYC_PENDING) {
+            $notify[] = ['error','Your KYC is under review'];
+            return to_route('user.home')->withNotify($notify);
+        }
+        if (auth()->user()->kv == Status::KYC_VERIFIED) {
+            $notify[] = ['error','You are already KYC verified'];
+            return to_route('user.home')->withNotify($notify);
+        }
+        $pageTitle = 'KYC Form';
+        $form = Form::where('act','kyc')->first();
+        return view('Template::user.kyc.form', compact('pageTitle','form'));
+    }
+
+    public function kycData()
+    {
+        $user = auth()->user();
+        $pageTitle = 'KYC Data';
+        abort_if($user->kv == Status::VERIFIED,403);
+        return view('Template::user.kyc.info', compact('pageTitle','user'));
+    }
+
+    public function kycSubmit(Request $request)
+    {
+        $form = Form::where('act','kyc')->firstOrFail();
+        $formData = $form->form_data;
+        $formProcessor = new FormProcessor();
+        $validationRule = $formProcessor->valueValidation($formData);
+        $request->validate($validationRule);
+        $user = auth()->user();
+        foreach (@$user->kyc_data ?? [] as $kycData) {
+            if ($kycData->type == 'file') {
+                fileManager()->removeFile(getFilePath('verify').'/'.$kycData->value);
+            }
+        }
+        $userData = $formProcessor->processFormData($request, $formData);
+        $user->kyc_data = $userData;
+        $user->kyc_rejection_reason = null;
+        $user->kv = Status::KYC_PENDING;
+        $user->save();
+
+        $notify[] = ['success','KYC data submitted successfully'];
+        return to_route('user.home')->withNotify($notify);
+
+    }
+
+    public function userData()
+    {
+        $user = auth()->user();
+
+        if ($user->profile_complete == Status::YES) {
+            return to_route('user.home');
+        }
+
+        $pageTitle  = 'User Data';
+        $info       = json_decode(json_encode(getIpInfo()), true);
+        $mobileCode = @implode(',', $info['code']);
+        $countries  = json_decode(file_get_contents(resource_path('views/partials/country.json')));
+
+        return view('Template::user.user_data', compact('pageTitle', 'user', 'countries', 'mobileCode'));
+    }
+
+    public function userDataSubmit(Request $request)
+    {
+
+        $user = auth()->user();
+
+        if ($user->profile_complete == Status::YES) {
+            return to_route('user.home');
+        }
+
+        $countryData  = (array)json_decode(file_get_contents(resource_path('views/partials/country.json')));
+        $countryCodes = implode(',', array_keys($countryData));
+        $mobileCodes  = implode(',', array_column($countryData, 'dial_code'));
+        $countries    = implode(',', array_column($countryData, 'country'));
+
+        $request->validate([
+            'country_code' => 'required|in:' . $countryCodes,
+            'country'      => 'required|in:' . $countries,
+            'mobile_code'  => 'required|in:' . $mobileCodes,
+            'username'     => 'required|unique:users|min:6',
+            'mobile'       => ['required','regex:/^([0-9]*)$/',Rule::unique('users')->where('dial_code',$request->mobile_code)],
+        ]);
+
+
+        if (preg_match("/[^a-z0-9_]/", trim($request->username))) {
+            $notify[] = ['info', 'Username can contain only small letters, numbers and underscore.'];
+            $notify[] = ['error', 'No special character, space or capital letters in username.'];
+            return back()->withNotify($notify)->withInput($request->all());
+        }
+
+        $user->country_code = $request->country_code;
+        $user->mobile       = $request->mobile;
+        $user->username     = $request->username;
+//         $user->birthdate     = $request->birthdate??null;
+
+
+        $user->address = $request->address;
+        $user->city = $request->city;
+        $user->state = $request->state;
+        $user->zip = $request->zip;
+        $user->country_name = @$request->country;
+        $user->dial_code = $request->mobile_code;
+
+        $user->profile_complete = Status::YES;
+        $user->save();
+
+        return to_route('user.home');
+    }
+
+    public function addDeviceToken(Request $request)
+    {
+
+        $validator = Validator::make($request->all(), [
+            'token' => 'required',
+        ]);
+
+        if ($validator->fails()) {
+            return ['success' => false, 'errors' => $validator->errors()->all()];
+        }
+
+        $deviceToken = DeviceToken::where('token', $request->token)->first();
+
+        if ($deviceToken) {
+            return ['success' => true, 'message' => 'Already exists'];
+        }
+
+        $deviceToken          = new DeviceToken();
+        $deviceToken->user_id = auth()->user()->id;
+        $deviceToken->token   = $request->token;
+        $deviceToken->is_app  = Status::NO;
+        $deviceToken->save();
+
+        return ['success' => true, 'message' => 'Token saved successfully'];
+    }
+
+    public function downloadAttachment($fileHash)
+    {
+        $filePath = decrypt($fileHash);
+        $extension = pathinfo($filePath, PATHINFO_EXTENSION);
+        $title = slug(gs('site_name')).'- attachments.'.$extension;
+        try {
+            $mimetype = mime_content_type($filePath);
+        } catch (\Exception $e) {
+            $notify[] = ['error','File does not exists'];
+            return back()->withNotify($notify);
+        }
+        header('Content-Disposition: attachment; filename="' . $title);
+        header("Content-Type: " . $mimetype);
+        return readfile($filePath);
+    }
+
+    public function rentalList() {
+        $pageTitle = 'On Going Rental List';
+        $rentals   = Rental::ongoing()->where('vehicle_user_id',auth()->user()->id)->searchable(['rent_no'])->orderBy('id', 'desc')->paginate(getPaginate());
+        return view('Template::user.rental.ongoing', compact('pageTitle', 'rentals'));
+    }
+
+    public function rentalDetail($id) {
+        $pageTitle = 'Rental Detail';
+        $rent      = Rental::ongoing()->findOrFail($id);
+        $deposit=Deposit::where('rent_id',$rent->id)->first();
+
+        return view('Template::user.rental.detail', compact('deposit','pageTitle', 'rent'));
+    }
+
+    public function rentedHistory(Request $request) {
+        $pageTitle = 'My Rented History';
+
+        $rentals = Rental::where('user_id', auth()->id())->with(['vehicle' => function ($query) {
+            $query->with('brand', 'user');
+        }])->searchable(['rent_no'])->with('pickupZone', 'pickupPoint')->orderBy('id', 'desc')->paginate(getPaginate());
+
+        return view('Template::user.rented.history', compact('pageTitle', 'rentals'));
+    }
+
+    public function rentedDetail($id) {
+        $pageTitle = 'Rental Detail';
+        $rent      = Rental::where('user_id', auth()->id())->with('pickupZone')->findOrFail($id);
+                    $now = \Carbon\Carbon::now();
+            $created_at = \Carbon\Carbon::parse($rent->created_at);
+            $hoursDifference = $now->diffInHours($created_at, true); // false gives signed difference
+            $deposit=Deposit::where('rent_id',$rent->id)->first();
+            // Can cancel if current time is before end_date AND
+            // the remaining hours are more than cancellation_hours
+            // dd([$hoursDifference,$now]);
+            // dd($now);
+            $canCancel = ($hoursDifference > 0 && $hoursDifference < $rent->vehicle->user->cancelation_hours) && ($rent->status==Status::RENT_APPROVED || $rent->status==Status::RENT_PENDING);
+
+        return view('Template::user.rented.detail', compact('deposit','pageTitle', 'rent','canCancel'));
+    }
+    public function markAllNotificationsRead(Request $request)
+    {
+        try {
+            Auth::user()->unreadNotifications()->update(['is_read' =>1]);
+            return response()->json(['success' => true]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Failed to mark notifications as read'], 500);
+        }
+    }
+
+    public function viewInvoice($id) {
+
+        $reservation = Rental::with(['user', 'vehicleOwner', 'vehicle'])->findOrFail($id);
+        $deposit=Deposit::where('rent_id',$id)->first();
+//         dd($deposit);
+        return view('Template::user.invoice.reservation', compact('reservation','deposit'));
+    }
+
+    public function downloadInvoice($id)
+    {
+        $reservation = Rental::with(['user', 'vehicleOwner', 'vehicle'])->findOrFail($id);
+        $deposit=Deposit::where('rent_id',$id)->first();
+
+        $html = View::make('Template::user.invoice.reservation', compact('reservation','deposit'))->render();
+
+        $mpdf = new Mpdf([
+            'tempDir' => storage_path('mpdf'),
+            'default_font' => 'dejavusans'
+        ]);
+
+        $mpdf->WriteHTML($html);
+
+        return response(
+            $mpdf->Output("invoice-{$reservation->id}.pdf", \Mpdf\Output\Destination::STRING_RETURN),
+            200,
+            [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => "attachment; filename=invoice-{$reservation->id}.pdf"
+            ]
+            );
+    }
+
+}

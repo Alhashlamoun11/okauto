@@ -1,0 +1,24 @@
+User-agent: *
+
+# Allow public pages
+Allow: /
+
+# Disallow sensitive Laravel folders
+Disallow: /app/
+Disallow: /bootstrap/
+Disallow: /config/
+Disallow: /database/
+Disallow: /resources/
+Disallow: /routes/
+Disallow: /storage/
+Disallow: /tests/
+Disallow: /core/
+
+# Optional: block vendor and node_modules if exposed
+Disallow: /vendor/
+Disallow: /node_modules/
+
+# Allow access to assets
+Allow: /assets/
+
+Sitemap: https://okauto.app/sitemap.xml
